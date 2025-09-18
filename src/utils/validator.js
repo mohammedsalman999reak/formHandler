@@ -156,7 +156,9 @@ export class FormValidator {
   }
 
   /**
-   * Sanitize string value
+   * Sanitize string value for storage.
+   * This provides defense-in-depth against XSS by encoding HTML entities.
+   * The primary defense should always be context-aware output encoding.
    * @param {string} value - String to sanitize
    * @returns {string} Sanitized string
    */
@@ -165,16 +167,28 @@ export class FormValidator {
       return String(value);
     }
 
-    return value
+    // HTML entity encoding map
+    const htmlEntities = {
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;'
+    };
+
+    const sanitizedValue = value
       .trim()
+      // Encode HTML special characters to prevent XSS
+      .replace(/[&<>"']/g, match => htmlEntities[match])
       // Remove null bytes
       .replace(/\0/g, '')
-      // Remove control characters except newlines and tabs
+      // Remove control characters except for common whitespace (newline, tab, carriage return)
       .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
-      // Normalize whitespace
-      .replace(/\s+/g, ' ')
-      // Limit length to prevent abuse
-      .substring(0, 10000);
+      // Normalize multiple whitespace characters into a single space
+      .replace(/\s+/g, ' ');
+
+    // Limit length to prevent abuse
+    return sanitizedValue.substring(0, 10000);
   }
 
   /**

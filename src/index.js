@@ -31,12 +31,32 @@ export default {
         return new Response(null, { status: 200, headers: corsHeaders });
       }
 
-      // Only allow POST requests
+      const url = new URL(request.url);
+
+      // Endpoint for issuing CSRF token
+      if (request.method === 'GET' && url.pathname === '/csrf-token') {
+        const csrfToken = security.generateSecureToken();
+        const csrfCookie = security.createCsrfCookie(csrfToken);
+
+        const headers = { ...corsHeaders, 'Set-Cookie': csrfCookie, 'Content-Type': 'application/json' };
+
+        return new Response(JSON.stringify({ csrfToken }), { headers });
+      }
+
+      // Only allow POST requests for form submission
       if (request.method !== 'POST') {
         return new Response(JSON.stringify({
           success: false,
-          error: 'Method not allowed. Only POST requests are accepted.'
+          error: 'Method not allowed. Use GET /csrf-token to get a token, or POST to submit the form.'
         }), { status: 405, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+
+      // CSRF Protection
+      if (!security.validateCsrfToken(request)) {
+        return new Response(JSON.stringify({
+          success: false,
+          error: 'Invalid CSRF token. Please refresh and try again.'
+        }), { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
 
       // Rate limiting
@@ -50,6 +70,18 @@ export default {
 
       // Parse incoming JSON form data
       const formData = await request.json();
+
+      // Spam protection using Cloudflare Turnstile
+      const turnstileToken = formData['cf-turnstile-response'];
+      const clientIp = request.headers.get('CF-Connecting-IP') || 'unknown';
+      const isTurnstileValid = await security.validateTurnstileToken(turnstileToken, clientIp, env);
+
+      if (!isTurnstileValid) {
+        return new Response(JSON.stringify({
+          success: false,
+          error: 'Spam protection validation failed. Please try again.'
+        }), { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
 
       // Validate required fields
       const validationResult = validator.validateFormData(formData, env.REQUIRED_FIELDS);

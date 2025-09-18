@@ -12,8 +12,7 @@
 
 export class SecurityHelper {
   constructor() {
-    // Rate limiting storage (in production, use Cloudflare KV or Durable Objects)
-    this.rateLimitStore = new Map();
+    // The rateLimitStore is no longer needed here, it's replaced by Cloudflare KV.
   }
 
   /**
@@ -66,48 +65,50 @@ export class SecurityHelper {
   }
 
   /**
-   * Check rate limit for request
+   * Check rate limit for request using Cloudflare KV
    * @param {Request} request - Incoming request
-   * @param {Object} env - Environment variables
+   * @param {Object} env - Environment variables, including RATE_LIMITER KV namespace
    * @returns {Object} Rate limit result
    */
   async checkRateLimit(request, env) {
+    // If KV namespace is not configured, skip rate limiting
+    if (!env.RATE_LIMITER) {
+      console.warn('RATE_LIMITER KV namespace not found. Skipping rate limiting.');
+      return { allowed: true, remaining: -1, resetTime: -1 };
+    }
+
     const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
     const rateLimitPerMinute = parseInt(env.RATE_LIMIT_REQUESTS_PER_MINUTE) || 60;
     const now = Date.now();
     const windowMs = 60 * 1000; // 1 minute window
 
-    // Get or create rate limit entry for this IP
-    if (!this.rateLimitStore.has(ip)) {
-      this.rateLimitStore.set(ip, {
-        requests: [],
-        lastCleanup: now
-      });
-    }
+    // Get request timestamps from KV
+    const kvData = await env.RATE_LIMITER.get(ip, { type: 'json' });
+    const timestamps = kvData || [];
 
-    const rateLimitData = this.rateLimitStore.get(ip);
-    
-    // Clean up old requests outside the window
-    rateLimitData.requests = rateLimitData.requests.filter(
+    // Filter timestamps to the current window
+    const recentTimestamps = timestamps.filter(
       timestamp => now - timestamp < windowMs
     );
 
     // Check if rate limit exceeded
-    if (rateLimitData.requests.length >= rateLimitPerMinute) {
+    if (recentTimestamps.length >= rateLimitPerMinute) {
       return {
         allowed: false,
         remaining: 0,
-        resetTime: rateLimitData.requests[0] + windowMs
+        resetTime: recentTimestamps[0] ? recentTimestamps[0] + windowMs : now + windowMs
       };
     }
 
-    // Add current request
-    rateLimitData.requests.push(now);
-    this.rateLimitStore.set(ip, rateLimitData);
+    // Add current request timestamp and update KV
+    const newTimestamps = [...recentTimestamps, now];
+    await env.RATE_LIMITER.put(ip, JSON.stringify(newTimestamps), {
+      expirationTtl: windowMs / 1000 // Expire the key after the window
+    });
 
     return {
       allowed: true,
-      remaining: rateLimitPerMinute - rateLimitData.requests.length,
+      remaining: rateLimitPerMinute - newTimestamps.length,
       resetTime: now + windowMs
     };
   }
@@ -240,17 +241,82 @@ export class SecurityHelper {
   }
 
   /**
-   * Clean up old rate limit entries
-   * This should be called periodically to prevent memory leaks
+   * Validate Cloudflare Turnstile token
+   * @param {string} token - The Turnstile token from the client
+   * @param {string} ip - The client's IP address
+   * @param {Object} env - Environment variables, including TURNSTILE_SECRET_KEY
+   * @returns {Promise<boolean>} - True if the token is valid, false otherwise
    */
-  cleanupRateLimitStore() {
-    const now = Date.now();
-    const maxAge = 60 * 60 * 1000; // 1 hour
-
-    for (const [ip, data] of this.rateLimitStore.entries()) {
-      if (now - data.lastCleanup > maxAge) {
-        this.rateLimitStore.delete(ip);
-      }
+  async validateTurnstileToken(token, ip, env) {
+    if (!env.TURNSTILE_SECRET_KEY) {
+      console.warn('TURNSTILE_SECRET_KEY not set. Skipping Turnstile validation.');
+      // Depending on security policy, you might want to fail open or closed.
+      // Failing open means submissions go through without verification.
+      return true;
     }
+
+    if (!token) {
+      return false;
+    }
+
+    const verificationUrl = 'https://challenges.cloudflare.com/turnstile/v2/siteverify';
+
+    const body = new URLSearchParams();
+    body.append('secret', env.TURNSTILE_SECRET_KEY);
+    body.append('response', token);
+    body.append('remoteip', ip);
+
+    try {
+      const response = await fetch(verificationUrl, {
+        method: 'POST',
+        body: body,
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded'
+        }
+      });
+
+      const data = await response.json();
+      return data.success;
+    } catch (error) {
+      console.error('Error validating Turnstile token:', error);
+      return false;
+    }
+  }
+  /**
+   * Creates a Set-Cookie header string for the CSRF token.
+   * @param {string} token - The CSRF token.
+   * @returns {string} The Set-Cookie header string.
+   */
+  createCsrfCookie(token) {
+    // Secure, HttpOnly cookie to prevent client-side script access.
+    // SameSite=Strict provides the strongest protection against CSRF.
+    return `__Host-csrf-token=${token}; Path=/; Secure; HttpOnly; SameSite=Strict`;
+  }
+
+  /**
+   * Validates the CSRF token from the double-submit cookie pattern.
+   * @param {Request} request - The incoming request.
+   * @returns {boolean} - True if the token is valid, false otherwise.
+   */
+  validateCsrfToken(request) {
+    const headerToken = request.headers.get('X-CSRF-Token');
+    const cookieHeader = request.headers.get('Cookie');
+
+    if (!headerToken || !cookieHeader) {
+      return false;
+    }
+
+    const cookies = cookieHeader.split(';').map(c => c.trim());
+    const csrfCookie = cookies.find(c => c.startsWith('__Host-csrf-token='));
+
+    if (!csrfCookie) {
+      return false;
+    }
+
+    const cookieToken = csrfCookie.split('=')[1];
+
+    // Constant-time comparison to prevent timing attacks is ideal,
+    // but for this stateless pattern, a simple string comparison is common.
+    return headerToken === cookieToken;
   }
 }
