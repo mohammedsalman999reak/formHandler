@@ -386,7 +386,9 @@ var FormValidator = class {
     return sanitized;
   }
   /**
-   * Sanitize string value
+   * Sanitize string value for storage.
+   * This provides defense-in-depth against XSS by encoding HTML entities.
+   * The primary defense should always be context-aware output encoding.
    * @param {string} value - String to sanitize
    * @returns {string} Sanitized string
    */
@@ -394,7 +396,15 @@ var FormValidator = class {
     if (typeof value !== "string") {
       return String(value);
     }
-    return value.trim().replace(/\0/g, "").replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "").replace(/\s+/g, " ").substring(0, 1e4);
+    const htmlEntities = {
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;"
+    };
+    const sanitizedValue = value.trim().replace(/[&<>"']/g, (match) => htmlEntities[match]).replace(/\0/g, "").replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "").replace(/\s+/g, " ");
+    return sanitizedValue.substring(0, 1e4);
   }
   /**
    * Sanitize number value
@@ -460,7 +470,6 @@ var SecurityHelper = class {
     __name(this, "SecurityHelper");
   }
   constructor() {
-    this.rateLimitStore = /* @__PURE__ */ new Map();
   }
   /**
    * Get CORS headers for response
@@ -501,38 +510,40 @@ var SecurityHelper = class {
     });
   }
   /**
-   * Check rate limit for request
+   * Check rate limit for request using Cloudflare KV
    * @param {Request} request - Incoming request
-   * @param {Object} env - Environment variables
+   * @param {Object} env - Environment variables, including RATE_LIMITER KV namespace
    * @returns {Object} Rate limit result
    */
   async checkRateLimit(request, env) {
+    if (!env.RATE_LIMITER) {
+      console.warn("RATE_LIMITER KV namespace not found. Skipping rate limiting.");
+      return { allowed: true, remaining: -1, resetTime: -1 };
+    }
     const ip = request.headers.get("CF-Connecting-IP") || "unknown";
     const rateLimitPerMinute = parseInt(env.RATE_LIMIT_REQUESTS_PER_MINUTE) || 60;
     const now = Date.now();
     const windowMs = 60 * 1e3;
-    if (!this.rateLimitStore.has(ip)) {
-      this.rateLimitStore.set(ip, {
-        requests: [],
-        lastCleanup: now
-      });
-    }
-    const rateLimitData = this.rateLimitStore.get(ip);
-    rateLimitData.requests = rateLimitData.requests.filter(
+    const kvData = await env.RATE_LIMITER.get(ip, { type: "json" });
+    const timestamps = kvData || [];
+    const recentTimestamps = timestamps.filter(
       (timestamp) => now - timestamp < windowMs
     );
-    if (rateLimitData.requests.length >= rateLimitPerMinute) {
+    if (recentTimestamps.length >= rateLimitPerMinute) {
       return {
         allowed: false,
         remaining: 0,
-        resetTime: rateLimitData.requests[0] + windowMs
+        resetTime: recentTimestamps[0] ? recentTimestamps[0] + windowMs : now + windowMs
       };
     }
-    rateLimitData.requests.push(now);
-    this.rateLimitStore.set(ip, rateLimitData);
+    const newTimestamps = [...recentTimestamps, now];
+    await env.RATE_LIMITER.put(ip, JSON.stringify(newTimestamps), {
+      expirationTtl: windowMs / 1e3
+      // Expire the key after the window
+    });
     return {
       allowed: true,
-      remaining: rateLimitPerMinute - rateLimitData.requests.length,
+      remaining: rateLimitPerMinute - newTimestamps.length,
       resetTime: now + windowMs
     };
   }
@@ -643,17 +654,66 @@ var SecurityHelper = class {
     };
   }
   /**
-   * Clean up old rate limit entries
-   * This should be called periodically to prevent memory leaks
+   * Validate Cloudflare Turnstile token
+   * @param {string} token - The Turnstile token from the client
+   * @param {string} ip - The client's IP address
+   * @param {Object} env - Environment variables, including TURNSTILE_SECRET_KEY
+   * @returns {Promise<boolean>} - True if the token is valid, false otherwise
    */
-  cleanupRateLimitStore() {
-    const now = Date.now();
-    const maxAge = 60 * 60 * 1e3;
-    for (const [ip, data] of this.rateLimitStore.entries()) {
-      if (now - data.lastCleanup > maxAge) {
-        this.rateLimitStore.delete(ip);
-      }
+  async validateTurnstileToken(token, ip, env) {
+    if (!env.TURNSTILE_SECRET_KEY) {
+      console.warn("TURNSTILE_SECRET_KEY not set. Skipping Turnstile validation.");
+      return true;
     }
+    if (!token) {
+      return false;
+    }
+    const verificationUrl = "https://challenges.cloudflare.com/turnstile/v2/siteverify";
+    const body = new URLSearchParams();
+    body.append("secret", env.TURNSTILE_SECRET_KEY);
+    body.append("response", token);
+    body.append("remoteip", ip);
+    try {
+      const response = await fetch(verificationUrl, {
+        method: "POST",
+        body,
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded"
+        }
+      });
+      const data = await response.json();
+      return data.success;
+    } catch (error) {
+      console.error("Error validating Turnstile token:", error);
+      return false;
+    }
+  }
+  /**
+   * Creates a Set-Cookie header string for the CSRF token.
+   * @param {string} token - The CSRF token.
+   * @returns {string} The Set-Cookie header string.
+   */
+  createCsrfCookie(token) {
+    return `__Host-csrf-token=${token}; Path=/; Secure; HttpOnly; SameSite=Strict`;
+  }
+  /**
+   * Validates the CSRF token from the double-submit cookie pattern.
+   * @param {Request} request - The incoming request.
+   * @returns {boolean} - True if the token is valid, false otherwise.
+   */
+  validateCsrfToken(request) {
+    const headerToken = request.headers.get("X-CSRF-Token");
+    const cookieHeader = request.headers.get("Cookie");
+    if (!headerToken || !cookieHeader) {
+      return false;
+    }
+    const cookies = cookieHeader.split(";").map((c) => c.trim());
+    const csrfCookie = cookies.find((c) => c.startsWith("__Host-csrf-token="));
+    if (!csrfCookie) {
+      return false;
+    }
+    const cookieToken = csrfCookie.split("=")[1];
+    return headerToken === cookieToken;
   }
 };
 
@@ -883,11 +943,24 @@ var src_default = {
       if (request.method === "OPTIONS") {
         return new Response(null, { status: 200, headers: corsHeaders });
       }
+      const url = new URL(request.url);
+      if (request.method === "GET" && url.pathname === "/csrf-token") {
+        const csrfToken = security.generateSecureToken();
+        const csrfCookie = security.createCsrfCookie(csrfToken);
+        const headers = { ...corsHeaders, "Set-Cookie": csrfCookie, "Content-Type": "application/json" };
+        return new Response(JSON.stringify({ csrfToken }), { headers });
+      }
       if (request.method !== "POST") {
         return new Response(JSON.stringify({
           success: false,
-          error: "Method not allowed. Only POST requests are accepted."
+          error: "Method not allowed. Use GET /csrf-token to get a token, or POST to submit the form."
         }), { status: 405, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+      if (!security.validateCsrfToken(request)) {
+        return new Response(JSON.stringify({
+          success: false,
+          error: "Invalid CSRF token. Please refresh and try again."
+        }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
       const rateLimitResult = await security.checkRateLimit(request, env);
       if (!rateLimitResult.allowed) {
@@ -897,6 +970,15 @@ var src_default = {
         }), { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
       const formData = await request.json();
+      const turnstileToken = formData["cf-turnstile-response"];
+      const clientIp = request.headers.get("CF-Connecting-IP") || "unknown";
+      const isTurnstileValid = await security.validateTurnstileToken(turnstileToken, clientIp, env);
+      if (!isTurnstileValid) {
+        return new Response(JSON.stringify({
+          success: false,
+          error: "Spam protection validation failed. Please try again."
+        }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
       const validationResult = validator.validateFormData(formData, env.REQUIRED_FIELDS);
       if (!validationResult.isValid) {
         return new Response(JSON.stringify({

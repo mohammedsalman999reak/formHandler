@@ -7,7 +7,7 @@ A production-ready, secure, and scalable form handler system built for Cloudflar
 - **Multi-domain Support**: Handle form submissions from multiple static websites
 - **Airtable Integration**: Automatically save form data to Airtable
 - **Email Notifications**: Send beautiful HTML emails via Resend
-- **Security First**: CORS protection, rate limiting, input sanitization
+- **Security First**: CSRF protection, Cloudflare Turnstile (spam protection), CORS, rate limiting, and input sanitization.
 - **Production Ready**: Comprehensive error handling and logging
 - **Easy Configuration**: Environment-based configuration
 - **Modular Design**: Clean, maintainable code structure
@@ -77,9 +77,42 @@ RATE_LIMIT_REQUESTS_PER_MINUTE=60
 
 # Optional: Form validation
 REQUIRED_FIELDS=name,email,message
+
+# Cloudflare Turnstile (for spam protection)
+TURNSTILE_SECRET_KEY=your_turnstile_secret_key_here
 ```
 
-### 4. Airtable Setup
+### 4. Security Setup (Required)
+
+#### a. Rate Limiting (KV Namespace)
+
+This worker uses Cloudflare KV for distributed rate limiting. You must create a KV namespace and link it.
+
+1.  **Create a KV Namespace** using the Wrangler CLI or the Cloudflare dashboard:
+    ```bash
+    wrangler kv:namespace create "RATE_LIMITER"
+    ```
+2.  **Copy the output** from the command. It will look like this:
+    ```
+    🌀  Creating namespace "RATE_LIMITER"
+    ✨  Success!
+    Add the following to your wrangler.toml:
+    [[kv_namespaces]]
+    binding = "RATE_LIMITER"
+    id = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    ```
+3.  **Update `wrangler.toml`**: Open your `wrangler.toml` file and paste the `[[kv_namespaces]]` configuration into it.
+
+#### b. Spam Protection (Cloudflare Turnstile)
+
+1.  **Create a Turnstile Widget**:
+    *   Go to your Cloudflare Dashboard -> Turnstile.
+    *   Click "Add site" and follow the instructions. Choose the "Invisible" widget type for the best user experience.
+    *   Note the **Site Key** (for your frontend) and the **Secret Key**.
+2.  **Set Environment Variable**:
+    *   Take the **Secret Key** from the previous step and set it as the `TURNSTILE_SECRET_KEY` environment variable in your `.env` file or in the Cloudflare dashboard.
+
+### 5. Airtable Setup
 
 1. Create a new Airtable base
 2. Create a table named "Form_Submissions" (or update `AIRTABLE_TABLE_NAME`)
@@ -139,66 +172,84 @@ wrangler env put ALLOWED_ORIGINS "https://yourdomain.com,https://anotherdomain.c
 
 ## 📝 Usage
 
-### Basic Form Submission
+The form submission process now requires three steps to ensure security:
+1.  **Render the Turnstile Widget** on your frontend.
+2.  **Fetch a CSRF token** from the worker.
+3.  **Submit the form** with the form data, the Turnstile response, and the CSRF token.
 
-Send a POST request to your worker URL:
+### Full Frontend Example
 
-```javascript
-const formData = {
-  name: "John Doe",
-  email: "john@example.com",
-  message: "Hello from my website!"
-};
-
-fetch('https://your-worker.your-subdomain.workers.dev', {
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-  },
-  body: JSON.stringify(formData)
-})
-.then(response => response.json())
-.then(data => console.log(data));
-```
-
-### HTML Form Example
+This example shows how to integrate Turnstile and the CSRF token flow.
 
 ```html
+<!-- Add the Turnstile script to your <head> -->
+<script src="https://challenges.cloudflare.com/turnstile/v2/api.js" async defer></script>
+
 <form id="contact-form">
   <input type="text" name="name" placeholder="Your Name" required>
   <input type="email" name="email" placeholder="Your Email" required>
   <textarea name="message" placeholder="Your Message" required></textarea>
+
+  <!-- Add the Turnstile widget to your form -->
+  <!-- Replace with your Turnstile Site Key -->
+  <div class="cf-turnstile" data-sitekey="your_turnstile_site_key_here"></div>
+
   <button type="submit">Send Message</button>
 </form>
 
 <script>
-document.getElementById('contact-form').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  
-  const formData = new FormData(e.target);
-  const data = Object.fromEntries(formData);
-  
-  try {
-    const response = await fetch('https://your-worker.your-subdomain.workers.dev', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(data)
-    });
-    
-    const result = await response.json();
-    
-    if (result.success) {
-      alert('Message sent successfully!');
-      e.target.reset();
-    } else {
-      alert('Error: ' + result.error);
+  const form = document.getElementById('contact-form');
+  const workerUrl = 'https://your-worker.your-subdomain.workers.dev';
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    try {
+      // 1. Fetch CSRF token
+      const csrfResponse = await fetch(`${workerUrl}/csrf-token`);
+      const { csrfToken } = await csrfResponse.json();
+
+      if (!csrfToken) {
+        throw new Error('Could not retrieve CSRF token.');
+      }
+
+      // 2. Get form data, including the Turnstile response
+      const formData = new FormData(form);
+      const data = Object.fromEntries(formData); // This includes 'cf-turnstile-response'
+
+      if (!data['cf-turnstile-response']) {
+        alert('Spam protection challenge failed. Please refresh and try again.');
+        return;
+      }
+
+      // 3. Submit the form with the CSRF token in the header
+      const submitResponse = await fetch(workerUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-Token': csrfToken // Send the token in the header
+        },
+        body: JSON.stringify(data)
+      });
+
+      const result = await submitResponse.json();
+
+      if (result.success) {
+        alert('Message sent successfully!');
+        form.reset();
+      } else {
+        alert(`Error: ${result.error || 'An unknown error occurred.'}`);
+      }
+    } catch (error) {
+      console.error('Submission error:', error);
+      alert('A network or system error occurred. Please try again.');
+    } finally {
+      // It's good practice to reset the Turnstile widget after submission
+      if (window.turnstile) {
+        window.turnstile.reset();
+      }
     }
-  } catch (error) {
-    alert('Network error. Please try again.');
-  }
-});
+  });
 </script>
 ```
 
@@ -285,12 +336,14 @@ fetch('https://your-worker.your-subdomain.workers.dev', {
 
 ## 🔒 Security Features
 
-- **CORS Protection**: Configurable allowed origins
-- **Rate Limiting**: IP-based request limiting
-- **Input Sanitization**: XSS and injection protection
-- **Validation**: Comprehensive form data validation
-- **Security Headers**: XSS protection, content type options
-- **API Key Authentication**: Optional API key protection
+- **CSRF Protection**: Stateless double-submit cookie pattern to prevent cross-site request forgery.
+- **Spam Protection**: Integrates with Cloudflare Turnstile to block bots.
+- **CORS Protection**: Configurable allowed origins to lock down access.
+- **Rate Limiting**: Distributed rate limiting using Cloudflare KV to prevent abuse.
+- **Input Sanitization**: Encodes HTML in submissions to provide defense-in-depth against XSS.
+- **Validation**: Comprehensive form data validation (required fields, formats, lengths).
+- **Security Headers**: Includes standard security headers like `X-Frame-Options` and `X-XSS-Protection`.
+- **API Key Authentication**: Optional secret key authentication for an extra layer of protection.
 
 ## 🐛 Error Handling
 
