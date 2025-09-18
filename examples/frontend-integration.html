@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Form Handler Integration Example</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        
+        .form-container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            color: #333;
+        }
+        
+        input, textarea, select {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #ddd;
+            border-radius: 5px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+        
+        input:focus, textarea:focus, select:focus {
+            outline: none;
+            border-color: #007bff;
+        }
+        
+        button {
+            background: #007bff;
+            color: white;
+            padding: 12px 30px;
+            border: none;
+            border-radius: 5px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        
+        button:hover {
+            background: #0056b3;
+        }
+        
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        
+        .error {
+            color: #dc3545;
+            font-size: 14px;
+            margin-top: 5px;
+        }
+        
+        .success {
+            color: #28a745;
+            font-size: 14px;
+            margin-top: 5px;
+        }
+        
+        .loading {
+            display: none;
+        }
+        
+        .loading.show {
+            display: inline-block;
+        }
+        
+        .spinner {
+            border: 2px solid #f3f3f3;
+            border-top: 2px solid #007bff;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            animation: spin 1s linear infinite;
+            display: inline-block;
+            margin-right: 10px;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .hidden {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="form-container">
+        <h1>Contact Us</h1>
+        <p>Send us a message and we'll get back to you as soon as possible.</p>
+        
+        <form id="contact-form">
+            <div class="form-group">
+                <label for="name">Name *</label>
+                <input type="text" id="name" name="name" required>
+                <div class="error" id="name-error"></div>
+            </div>
+            
+            <div class="form-group">
+                <label for="email">Email *</label>
+                <input type="email" id="email" name="email" required>
+                <div class="error" id="email-error"></div>
+            </div>
+            
+            <div class="form-group">
+                <label for="phone">Phone</label>
+                <input type="tel" id="phone" name="phone">
+                <div class="error" id="phone-error"></div>
+            </div>
+            
+            <div class="form-group">
+                <label for="company">Company</label>
+                <input type="text" id="company" name="company">
+                <div class="error" id="company-error"></div>
+            </div>
+            
+            <div class="form-group">
+                <label for="subject">Subject *</label>
+                <select id="subject" name="subject" required>
+                    <option value="">Select a subject</option>
+                    <option value="general">General Inquiry</option>
+                    <option value="support">Technical Support</option>
+                    <option value="sales">Sales Question</option>
+                    <option value="partnership">Partnership</option>
+                    <option value="other">Other</option>
+                </select>
+                <div class="error" id="subject-error"></div>
+            </div>
+            
+            <div class="form-group">
+                <label for="message">Message *</label>
+                <textarea id="message" name="message" rows="5" required></textarea>
+                <div class="error" id="message-error"></div>
+            </div>
+            
+            <div class="form-group">
+                <label for="source">How did you hear about us?</label>
+                <select id="source" name="source">
+                    <option value="">Select an option</option>
+                    <option value="google">Google Search</option>
+                    <option value="social">Social Media</option>
+                    <option value="referral">Referral</option>
+                    <option value="advertisement">Advertisement</option>
+                    <option value="other">Other</option>
+                </select>
+            </div>
+            
+            <button type="submit" id="submit-btn">
+                <span class="loading" id="loading">
+                    <span class="spinner"></span>
+                    Sending...
+                </span>
+                <span id="submit-text">Send Message</span>
+            </button>
+            
+            <div class="success hidden" id="success-message">
+                Thank you! Your message has been sent successfully. We'll get back to you soon.
+            </div>
+        </form>
+    </div>
+
+    <script>
+        // Configuration - Update these values
+        const CONFIG = {
+            // Replace with your actual worker URL
+            workerUrl: 'https://your-worker.your-subdomain.workers.dev',
+            
+            // Optional: Add API key for authentication
+            apiKey: null, // 'your-api-key-here'
+            
+            // Form validation rules
+            validation: {
+                name: { minLength: 2, maxLength: 100 },
+                email: { required: true },
+                phone: { pattern: /^[\+]?[1-9][\d]{0,15}$/ },
+                message: { minLength: 10, maxLength: 5000 }
+            }
+        };
+
+        class FormHandler {
+            constructor() {
+                this.form = document.getElementById('contact-form');
+                this.submitBtn = document.getElementById('submit-btn');
+                this.loading = document.getElementById('loading');
+                this.submitText = document.getElementById('submit-text');
+                this.successMessage = document.getElementById('success-message');
+                
+                this.init();
+            }
+
+            init() {
+                this.form.addEventListener('submit', this.handleSubmit.bind(this));
+                
+                // Real-time validation
+                this.form.addEventListener('input', this.handleInput.bind(this));
+            }
+
+            async handleSubmit(e) {
+                e.preventDefault();
+                
+                // Clear previous errors
+                this.clearErrors();
+                
+                // Validate form
+                if (!this.validateForm()) {
+                    return;
+                }
+                
+                // Show loading state
+                this.setLoading(true);
+                
+                try {
+                    // Prepare form data
+                    const formData = this.getFormData();
+                    
+                    // Send to worker
+                    const response = await this.sendToWorker(formData);
+                    
+                    if (response.success) {
+                        this.showSuccess();
+                        this.form.reset();
+                    } else {
+                        this.showError(response.error || 'An error occurred');
+                    }
+                    
+                } catch (error) {
+                    console.error('Form submission error:', error);
+                    this.showError('Network error. Please try again.');
+                } finally {
+                    this.setLoading(false);
+                }
+            }
+
+            getFormData() {
+                const formData = new FormData(this.form);
+                const data = {};
+                
+                for (const [key, value] of formData.entries()) {
+                    data[key] = value;
+                }
+                
+                // Add metadata
+                data.timestamp = new Date().toISOString();
+                data.userAgent = navigator.userAgent;
+                data.origin = window.location.origin;
+                
+                return data;
+            }
+
+            async sendToWorker(data) {
+                const headers = {
+                    'Content-Type': 'application/json'
+                };
+                
+                // Add API key if configured
+                if (CONFIG.apiKey) {
+                    headers['Authorization'] = `Bearer ${CONFIG.apiKey}`;
+                }
+                
+                const response = await fetch(CONFIG.workerUrl, {
+                    method: 'POST',
+                    headers: headers,
+                    body: JSON.stringify(data)
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                return await response.json();
+            }
+
+            validateForm() {
+                let isValid = true;
+                
+                // Validate required fields
+                const requiredFields = ['name', 'email', 'subject', 'message'];
+                
+                for (const field of requiredFields) {
+                    const input = document.getElementById(field);
+                    const value = input.value.trim();
+                    
+                    if (!value) {
+                        this.showFieldError(field, `${this.getFieldLabel(field)} is required`);
+                        isValid = false;
+                    }
+                }
+                
+                // Validate email format
+                const email = document.getElementById('email').value.trim();
+                if (email && !this.isValidEmail(email)) {
+                    this.showFieldError('email', 'Please enter a valid email address');
+                    isValid = false;
+                }
+                
+                // Validate phone format
+                const phone = document.getElementById('phone').value.trim();
+                if (phone && !CONFIG.validation.phone.pattern.test(phone)) {
+                    this.showFieldError('phone', 'Please enter a valid phone number');
+                    isValid = false;
+                }
+                
+                // Validate message length
+                const message = document.getElementById('message').value.trim();
+                if (message && message.length < CONFIG.validation.message.minLength) {
+                    this.showFieldError('message', `Message must be at least ${CONFIG.validation.message.minLength} characters long`);
+                    isValid = false;
+                }
+                
+                return isValid;
+            }
+
+            handleInput(e) {
+                const field = e.target.name;
+                const value = e.target.value.trim();
+                
+                // Clear field error on input
+                this.clearFieldError(field);
+                
+                // Real-time validation for specific fields
+                if (field === 'email' && value && !this.isValidEmail(value)) {
+                    this.showFieldError(field, 'Please enter a valid email address');
+                }
+                
+                if (field === 'phone' && value && !CONFIG.validation.phone.pattern.test(value)) {
+                    this.showFieldError(field, 'Please enter a valid phone number');
+                }
+            }
+
+            isValidEmail(email) {
+                const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+                return emailRegex.test(email);
+            }
+
+            showFieldError(field, message) {
+                const errorElement = document.getElementById(`${field}-error`);
+                if (errorElement) {
+                    errorElement.textContent = message;
+                }
+            }
+
+            clearFieldError(field) {
+                const errorElement = document.getElementById(`${field}-error`);
+                if (errorElement) {
+                    errorElement.textContent = '';
+                }
+            }
+
+            clearErrors() {
+                const errorElements = document.querySelectorAll('.error');
+                errorElements.forEach(el => el.textContent = '');
+            }
+
+            showError(message) {
+                // You can implement a global error display here
+                alert(message);
+            }
+
+            showSuccess() {
+                this.successMessage.classList.remove('hidden');
+                setTimeout(() => {
+                    this.successMessage.classList.add('hidden');
+                }, 5000);
+            }
+
+            setLoading(loading) {
+                if (loading) {
+                    this.submitBtn.disabled = true;
+                    this.loading.classList.add('show');
+                    this.submitText.classList.add('hidden');
+                } else {
+                    this.submitBtn.disabled = false;
+                    this.loading.classList.remove('show');
+                    this.submitText.classList.remove('hidden');
+                }
+            }
+
+            getFieldLabel(field) {
+                const labels = {
+                    name: 'Name',
+                    email: 'Email',
+                    phone: 'Phone',
+                    company: 'Company',
+                    subject: 'Subject',
+                    message: 'Message',
+                    source: 'Source'
+                };
+                return labels[field] || field;
+            }
+        }
+
+        // Initialize form handler when DOM is loaded
+        document.addEventListener('DOMContentLoaded', () => {
+            new FormHandler();
+        });
+    </script>
+</body>
+</html>

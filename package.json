@@ -1,0 +1,18 @@
+{
+  "name": "form-handler-worker",
+  "version": "1.0.0",
+  "description": "Production-ready Cloudflare Workers form handler with Airtable and Resend integration",
+  "main": "src/index.js",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "wrangler dev --local"
+  },
+  "keywords": ["cloudflare-workers", "form-handler", "airtable", "resend", "serverless"],
+  "author": "Your Name",
+  "license": "MIT",
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20231218.0",
+    "wrangler": "^3.22.1"
+  }
+}

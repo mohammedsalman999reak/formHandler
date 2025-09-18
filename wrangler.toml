@@ -1,0 +1,33 @@
+name = "form-handler-worker"
+main = "src/index.js"
+compatibility_date = "2024-01-15"
+
+# Worker configuration
+[build]
+command = ""
+
+# Environment variables (set these in Cloudflare dashboard or via wrangler)
+[vars]
+# These will be overridden by environment-specific vars
+ENVIRONMENT = "development"
+
+# Production environment
+[env.production]
+name = "form-handler-prod"
+compatibility_date = "2024-01-15"
+
+# Staging environment  
+[env.staging]
+name = "form-handler-staging"
+compatibility_date = "2024-01-15"
+
+# Development environment
+[env.development]
+name = "form-handler-dev"
+compatibility_date = "2024-01-15"
+
+# Optional: Add KV namespace for rate limiting (uncomment if needed)
+# [[kv_namespaces]]
+# binding = "RATE_LIMIT_KV"
+# id = "your-kv-namespace-id"
+# preview_id = "your-preview-kv-namespace-id"
