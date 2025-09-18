@@ -1,14 +1,7 @@
 /**
  * Cloudflare Workers Form Handler
  * Production-ready form submission handler with Airtable and Resend integration
- * 
- * Features:
- * - CORS support for multiple domains
- * - Form validation and sanitization
- * - Airtable integration for data storage
- * - Resend email notifications
- * - Rate limiting and security
- * - Comprehensive error handling
+ * Updated to handle Airtable Timestamp field correctly
  */
 
 import { AirtableService } from './services/airtable.js';
@@ -26,48 +19,38 @@ const logger = new Logger();
 
 /**
  * Main request handler
- * Handles all incoming requests and routes them appropriately
  */
 export default {
   async fetch(request, env, ctx) {
     try {
-      // Set up CORS headers for all requests
+      // Get CORS headers (allows your frontend to call this Worker)
       const corsHeaders = security.getCorsHeaders(request, env.ALLOWED_ORIGINS);
-      
-      // Handle preflight OPTIONS requests
+
+      // Handle preflight OPTIONS requests for CORS
       if (request.method === 'OPTIONS') {
-        return new Response(null, {
-          status: 200,
-          headers: corsHeaders
-        });
+        return new Response(null, { status: 200, headers: corsHeaders });
       }
 
-      // Only allow POST requests for form submissions
+      // Only allow POST requests
       if (request.method !== 'POST') {
         return new Response(JSON.stringify({
           success: false,
           error: 'Method not allowed. Only POST requests are accepted.'
-        }), {
-          status: 405,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
+        }), { status: 405, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
 
-      // Rate limiting check
+      // Rate limiting
       const rateLimitResult = await security.checkRateLimit(request, env);
       if (!rateLimitResult.allowed) {
         return new Response(JSON.stringify({
           success: false,
           error: 'Rate limit exceeded. Please try again later.'
-        }), {
-          status: 429,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
+        }), { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
 
-      // Parse and validate the request
+      // Parse incoming JSON form data
       const formData = await request.json();
-      
+
       // Validate required fields
       const validationResult = validator.validateFormData(formData, env.REQUIRED_FIELDS);
       if (!validationResult.isValid) {
@@ -75,43 +58,44 @@ export default {
           success: false,
           error: 'Validation failed',
           details: validationResult.errors
-        }), {
-          status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
+        }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
 
-      // Sanitize form data
+      // Sanitize form data to prevent bad input
       const sanitizedData = validator.sanitizeFormData(formData);
-      
-      // Add metadata
+
+      // Prepare submission data for Airtable
+      // FIX: Airtable Timestamp must be in a format it accepts
+      // Here we send only ISO string with full date-time (works if field is "Date & Time")
+      const now = new Date();
       const submissionData = {
-        ...sanitizedData,
-        timestamp: new Date().toISOString(),
-        ip: request.headers.get('CF-Connecting-IP') || 'unknown',
-        userAgent: request.headers.get('User-Agent') || 'unknown',
-        origin: request.headers.get('Origin') || 'unknown'
+        Name: sanitizedData.name || '',
+        Email: sanitizedData.email || '',
+        Message: sanitizedData.message || '',
+        Timestamp: now.toISOString().split('T')[0],
+        'IP Address': request.headers.get('CF-Connecting-IP') || 'unknown',
+        Origin: request.headers.get('Origin') || request.headers.get('Referer') || 'unknown'
       };
 
-      // Process the form submission
+      // Process submission: save to Airtable + send email
       const result = await processFormSubmission(submissionData, env);
 
-      // Log the submission
+      // Log submission details for debugging
       logger.log('Form submission processed', {
         success: result.success,
         submissionId: result.submissionId,
-        origin: submissionData.origin
+        origin: submissionData.Origin
       });
 
+      // Return response to frontend
       return new Response(JSON.stringify(result), {
         status: result.success ? 200 : 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       });
 
     } catch (error) {
-      // Log the error
+      // Unexpected errors
       logger.error('Unexpected error in form handler', error);
-      
       return new Response(JSON.stringify({
         success: false,
         error: 'Internal server error. Please try again later.'
@@ -124,10 +108,7 @@ export default {
 };
 
 /**
- * Process form submission by saving to Airtable and sending email
- * @param {Object} formData - Sanitized form data
- * @param {Object} env - Environment variables
- * @returns {Object} Processing result
+ * Process form submission (Airtable + Resend Email)
  */
 async function processFormSubmission(formData, env) {
   const submissionId = generateSubmissionId();
@@ -139,42 +120,42 @@ async function processFormSubmission(formData, env) {
   };
 
   try {
-    // Save to Airtable (if configured)
+    // Save to Airtable
     if (env.AIRTABLE_API_KEY && env.AIRTABLE_BASE_ID) {
       try {
         const airtableResult = await airtableService.saveSubmission(formData, env);
         results.airtable = airtableResult;
+        console.log('Airtable response:', airtableResult);
       } catch (error) {
         results.airtable.error = error.message;
-        logger.error('Airtable save failed', error);
+        console.error('Airtable error:', error);
       }
     }
 
-    // Send email notification (if configured)
+    // Send email via Resend
     if (env.RESEND_API_KEY) {
       try {
         const emailResult = await emailService.sendNotification(formData, env);
         results.email = emailResult;
+        console.log('Resend response:', emailResult);
       } catch (error) {
         results.email.error = error.message;
-        logger.error('Email send failed', error);
+        console.error('Resend error:', error);
       }
     }
 
-    // Consider submission successful if at least one service worked
+    // Mark overall success if at least one service succeeded
     results.success = results.airtable.success || results.email.success;
-
     return results;
 
   } catch (error) {
-    logger.error('Form processing failed', error);
+    console.error('Form processing failed:', error);
     throw error;
   }
 }
 
 /**
- * Generate a unique submission ID
- * @returns {string} Unique submission ID
+ * Generate unique submission ID
  */
 function generateSubmissionId() {
   return `sub_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;

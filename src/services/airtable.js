@@ -1,51 +1,46 @@
 /**
- * Airtable Service
- * Handles all interactions with Airtable API for form data storage
- * 
- * Features:
- * - Secure API key handling
- * - Automatic retry on failures
- * - Data validation before saving
- * - Comprehensive error handling
+ * AirtableService
+ * Handles all interactions with Airtable API for form submissions
  */
-
 export class AirtableService {
   constructor() {
+    // Base URL for Airtable API
     this.baseUrl = 'https://api.airtable.com/v0';
   }
 
   /**
    * Save form submission to Airtable
    * @param {Object} formData - Form data to save
-   * @param {Object} env - Environment variables
-   * @returns {Object} Save result
+   * @param {Object} env - Environment variables (API keys, base ID, table name)
    */
   async saveSubmission(formData, env) {
     try {
-      // Validate required Airtable configuration
+      // Ensure Airtable configuration exists
       if (!env.AIRTABLE_API_KEY || !env.AIRTABLE_BASE_ID) {
         throw new Error('Airtable configuration missing');
       }
 
-      // Prepare the data for Airtable
+      // Prepare data in Airtable format
       const airtableData = this.prepareAirtableData(formData);
-      
-      // Make API request to Airtable
+
+      // Send data to Airtable
       const response = await this.makeAirtableRequest(airtableData, env);
-      
+
+      // If request successful, return success object
       if (response.ok) {
         const result = await response.json();
         return {
           success: true,
-          recordId: result.id,
+          recordId: result.id, // Airtable record ID
           message: 'Data saved to Airtable successfully'
         };
       } else {
+        // If API returns error, capture it
         const errorData = await response.text();
         throw new Error(`Airtable API error: ${response.status} - ${errorData}`);
       }
-
     } catch (error) {
+      // Return error object instead of throwing
       return {
         success: false,
         error: error.message
@@ -54,144 +49,91 @@ export class AirtableService {
   }
 
   /**
-   * Prepare form data for Airtable format
-   * @param {Object} formData - Raw form data
-   * @returns {Object} Airtable-formatted data
+   * Prepare data in format Airtable expects
+   * Maps incoming form data to table fields
    */
   prepareAirtableData(formData) {
-    const fields = {};
-    
-    // Map common form fields to Airtable fields
-    const fieldMapping = {
-      name: 'Name',
-      email: 'Email',
-      phone: 'Phone',
-      message: 'Message',
-      subject: 'Subject',
-      company: 'Company',
-      website: 'Website',
-      source: 'Source',
-      timestamp: 'Timestamp',
-      ip: 'IP Address',
-      userAgent: 'User Agent',
-      origin: 'Origin'
+    // Only map fields that exist in your Airtable table
+    const fields = {
+      Name: formData.Name || formData.name || '',          // Map Name
+      Email: formData.Email || formData.email || '',       // Map Email
+      Message: formData.Message || formData.message || '', // Map Message
+      Timestamp: formData.Timestamp || new Date().toISOString(), // Use ISO string for date
+      'IP Address': formData['IP Address'] || formData.ip || 'unknown', // Capture IP
+      Origin: formData.Origin || formData.origin || 'unknown'          // Capture Origin header
     };
 
-    // Map form data to Airtable fields
-    Object.keys(formData).forEach(key => {
-      const airtableField = fieldMapping[key] || this.capitalizeFirst(key);
-      fields[airtableField] = formData[key];
-    });
-
-    return {
-      records: [{
-        fields: fields
-      }]
-    };
+    // Airtable API expects records array
+    return { records: [{ fields }] };
   }
 
   /**
-   * Make API request to Airtable
-   * @param {Object} data - Data to send
-   * @param {Object} env - Environment variables
-   * @returns {Promise<Response>} API response
+   * Send POST request to Airtable API
    */
   async makeAirtableRequest(data, env) {
     const url = `${this.baseUrl}/${env.AIRTABLE_BASE_ID}/${env.AIRTABLE_TABLE_NAME || 'Form_Submissions'}`;
-    
+
     const requestOptions = {
-      method: 'POST',
+      method: 'POST',  // POST to create new record
       headers: {
-        'Authorization': `Bearer ${env.AIRTABLE_API_KEY}`,
+        Authorization: `Bearer ${env.AIRTABLE_API_KEY}`, // API key in header
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify(data)
+      body: JSON.stringify(data) // Convert JS object to JSON string
     };
 
-    // Add retry logic for network failures
+    // Retry request in case of failures
     return await this.retryRequest(url, requestOptions, 3);
   }
 
   /**
-   * Retry request with exponential backoff
-   * @param {string} url - Request URL
-   * @param {Object} options - Request options
-   * @param {number} maxRetries - Maximum number of retries
-   * @returns {Promise<Response>} API response
+   * Retry logic with exponential backoff
+   * Tries the request multiple times if network/server errors occur
    */
   async retryRequest(url, options, maxRetries = 3) {
     let lastError;
-    
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         const response = await fetch(url, options);
-        
-        // If successful or client error (4xx), don't retry
-        if (response.ok || (response.status >= 400 && response.status < 500)) {
-          return response;
-        }
-        
-        // For server errors (5xx), retry
-        if (attempt === maxRetries) {
-          return response;
-        }
-        
-        // Wait before retry (exponential backoff)
+
+        // If success or client error, return immediately
+        if (response.ok || (response.status >= 400 && response.status < 500)) return response;
+
+        // If server error and last attempt, return response
+        if (attempt === maxRetries) return response;
+
+        // Wait before retrying (exponential backoff)
         await this.delay(Math.pow(2, attempt) * 1000);
-        
       } catch (error) {
         lastError = error;
-        
-        if (attempt === maxRetries) {
-          throw error;
-        }
-        
-        // Wait before retry
-        await this.delay(Math.pow(2, attempt) * 1000);
+        if (attempt === maxRetries) throw error; // Throw if final attempt
+        await this.delay(Math.pow(2, attempt) * 1000); // Wait before next try
       }
     }
-    
     throw lastError;
   }
 
   /**
-   * Delay execution for specified milliseconds
-   * @param {number} ms - Milliseconds to delay
-   * @returns {Promise} Promise that resolves after delay
+   * Utility function to pause execution
    */
   delay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
   /**
-   * Capitalize first letter of string
-   * @param {string} str - String to capitalize
-   * @returns {string} Capitalized string
-   */
-  capitalizeFirst(str) {
-    return str.charAt(0).toUpperCase() + str.slice(1);
-  }
-
-  /**
    * Test Airtable connection
-   * @param {Object} env - Environment variables
-   * @returns {Object} Test result
+   * Useful for debugging API key or table issues
    */
   async testConnection(env) {
     try {
       if (!env.AIRTABLE_API_KEY || !env.AIRTABLE_BASE_ID) {
-        return {
-          success: false,
-          error: 'Airtable configuration missing'
-        };
+        return { success: false, error: 'Airtable configuration missing' };
       }
 
       const url = `${this.baseUrl}/${env.AIRTABLE_BASE_ID}/${env.AIRTABLE_TABLE_NAME || 'Form_Submissions'}`;
       const response = await fetch(url, {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${env.AIRTABLE_API_KEY}`
-        }
+        method: 'GET', // GET to fetch table info
+        headers: { Authorization: `Bearer ${env.AIRTABLE_API_KEY}` }
       });
 
       return {
@@ -199,12 +141,8 @@ export class AirtableService {
         status: response.status,
         error: response.ok ? null : `HTTP ${response.status}`
       };
-
     } catch (error) {
-      return {
-        success: false,
-        error: error.message
-      };
+      return { success: false, error: error.message };
     }
   }
 }
