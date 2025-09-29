@@ -1,7 +1,7 @@
 /**
  * Security Helper
  * Handles security-related functionality including CORS, rate limiting, and request validation
- * 
+ *
  * Features:
  * - CORS header management
  * - Rate limiting with IP-based tracking
@@ -25,9 +25,9 @@ export class SecurityHelper {
   getCorsHeaders(request, allowedOrigins = '*') {
     const origin = request.headers.get('Origin');
     const allowedOriginsList = allowedOrigins ? allowedOrigins.split(',').map(o => o.trim()) : ['*'];
-    
+
     // Determine if origin is allowed
-    const isAllowedOrigin = allowedOriginsList.includes('*') || 
+    const isAllowedOrigin = allowedOriginsList.includes('*') ||
                            allowedOriginsList.includes(origin) ||
                            this.isSubdomainAllowed(origin, allowedOriginsList);
 
@@ -51,16 +51,16 @@ export class SecurityHelper {
    */
   isSubdomainAllowed(origin, allowedOrigins) {
     if (!origin) return false;
-    
+
     return allowedOrigins.some(allowed => {
       if (allowed === '*') return true;
       if (origin === allowed) return true;
-      
+
       // Check if origin is subdomain of allowed domain
       if (allowed.startsWith('.')) {
         return origin.endsWith(allowed);
       }
-      
+
       return false;
     });
   }
@@ -86,7 +86,7 @@ export class SecurityHelper {
     }
 
     const rateLimitData = this.rateLimitStore.get(ip);
-    
+
     // Clean up old requests outside the window
     rateLimitData.requests = rateLimitData.requests.filter(
       timestamp => now - timestamp < windowMs
@@ -123,10 +123,10 @@ export class SecurityHelper {
     if (!origin) return false;
 
     const allowedOriginsList = allowedOrigins ? allowedOrigins.split(',').map(o => o.trim()) : [];
-    
+
     if (allowedOriginsList.includes('*')) return true;
     if (allowedOriginsList.includes(origin)) return true;
-    
+
     return this.isSubdomainAllowed(origin, allowedOriginsList);
   }
 
@@ -152,9 +152,9 @@ export class SecurityHelper {
    * @returns {string} Client IP address
    */
   getClientIP(request) {
-    return request.headers.get('CF-Connecting-IP') || 
-           request.headers.get('X-Forwarded-For') || 
-           request.headers.get('X-Real-IP') || 
+    return request.headers.get('CF-Connecting-IP') ||
+           request.headers.get('X-Forwarded-For') ||
+           request.headers.get('X-Real-IP') ||
            'unknown';
   }
 
@@ -199,11 +199,11 @@ export class SecurityHelper {
   generateSecureToken(length = 32) {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
     let result = '';
-    
+
     for (let i = 0; i < length; i++) {
       result += chars.charAt(Math.floor(Math.random() * chars.length));
     }
-    
+
     return result;
   }
 
@@ -215,7 +215,7 @@ export class SecurityHelper {
    */
   async validateRequestSize(request, maxSize = 1024 * 1024) { // 1MB default
     const contentLength = request.headers.get('Content-Length');
-    
+
     if (contentLength && parseInt(contentLength) > maxSize) {
       return false;
     }
@@ -251,6 +251,39 @@ export class SecurityHelper {
       if (now - data.lastCleanup > maxAge) {
         this.rateLimitStore.delete(ip);
       }
+    }
+  }
+
+  /**
+ * Validate Cloudflare Turnstile token
+ * @param {string} token - Token from frontend widget
+ * @param {string} secretKey - TURNSTILE_SECRET_KEY from env
+ * @returns {Promise<boolean>} true if valid
+ */
+  async validateTurnstileToken(token, clientIP, env) {
+    const secretKey = env.TURNSTILE_SECRET_KEY;
+    if (!token) return false;
+    if (!secretKey) throw new Error('TURNSTILE_SECRET_KEY not set');
+
+    const params = new URLSearchParams();
+    params.append('secret', secretKey);
+    params.append('response', token);
+    params.append('remoteip', clientIP); // optional but recommended
+
+    try {
+        const res = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            body: params.toString()
+        });
+
+        const data = await res.json();
+        return data.success === true;
+    } catch (err) {
+        console.error('Turnstile validation failed:', err);
+        return false;
     }
   }
 }

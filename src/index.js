@@ -138,6 +138,8 @@ export default {
                 }
             }
 
+
+
             // Sanitize and validate form data
             const sanitizedData = validator.sanitizeFormData(rawData);
             const formFields = SubmissionBuilder.extractFormFields(sanitizedData);
