@@ -6,9 +6,8 @@ compatibility_date = "2024-01-15"
 [build]
 command = ""
 
-# Environment variables (set these in Cloudflare dashboard or via wrangler)
+# Environment variables (default, can be overridden by specific env)
 [vars]
-# These will be overridden by environment-specific vars
 ENVIRONMENT = "development"
 
 # Production environment
@@ -16,18 +15,49 @@ ENVIRONMENT = "development"
 name = "form-handler-prod"
 compatibility_date = "2024-01-15"
 
-# Staging environment  
+[env.production.vars]
+ENVIRONMENT = "production"
+AIRTABLE_API_KEY = "YOUR_AIRTABLE_API_KEY"
+AIRTABLE_BASE_ID = "YOUR_AIRTABLE_BASE_ID"
+AIRTABLE_TABLE_NAME = "Form Submissions"
+RESEND_API_KEY = "YOUR_RESEND_API_KEY"
+RESEND_FROM_EMAIL = "from@example.com"
+RESEND_TO_EMAIL = "to@example.com"
+ALLOWED_ORIGINS = "*"
+API_SECRET_KEY = "YOUR_API_SECRET_KEY"
+RATE_LIMIT_REQUESTS_PER_MINUTE = "60"
+REQUIRED_FIELDS = "name,email,message"
+TURNSTILE_SECRET_KEY = "YOUR_TURNSTILE_SECRET_KEY"
+
+# Staging environment
 [env.staging]
 name = "form-handler-staging"
 compatibility_date = "2024-01-15"
+
+[env.staging.vars]
+ENVIRONMENT = "staging"
+# You can override any keys for staging if needed
 
 # Development environment
 [env.development]
 name = "form-handler-dev"
 compatibility_date = "2024-01-15"
 
-# Optional: Add KV namespace for rate limiting (uncomment if needed)
-# [[kv_namespaces]]
-# binding = "RATE_LIMIT_KV"
-# id = "your-kv-namespace-id"
-# preview_id = "your-preview-kv-namespace-id"
+[env.development.vars]
+ENVIRONMENT = "development"
+AIRTABLE_API_KEY = "YOUR_AIRTABLE_API_KEY"
+AIRTABLE_BASE_ID = "YOUR_AIRTABLE_BASE_ID"
+AIRTABLE_TABLE_NAME = "Form Submissions"
+RESEND_API_KEY = "YOUR_RESEND_API_KEY"
+RESEND_FROM_EMAIL = "from@example.com"
+RESEND_TO_EMAIL = "to@example.com"
+ALLOWED_ORIGINS = "*"
+API_SECRET_KEY = "YOUR_API_SECRET_KEY"
+RATE_LIMIT_REQUESTS_PER_MINUTE = "60"
+REQUIRED_FIELDS = "name,email,message"
+TURNSTILE_SECRET_KEY = "YOUR_TURNSTILE_SECRET_KEY"
+
+# Example empty KV namespace for development
+[[env.development.kv_namespaces]]
+# binding = "RATE_LIMITER"
+# id = "PUT_YOUR_KV_NAMESPACE_ID_HERE"
