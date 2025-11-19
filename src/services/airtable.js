@@ -5,7 +5,7 @@
 export class AirtableService {
   constructor() {
     // Base URL for Airtable API
-    this.baseUrl = 'https://api.airtable.com/v0';
+    this.baseUrl = "https://api.airtable.com/v0";
   }
 
   /**
@@ -17,7 +17,7 @@ export class AirtableService {
     try {
       // Ensure Airtable configuration exists
       if (!env.AIRTABLE_API_KEY || !env.AIRTABLE_BASE_ID) {
-        throw new Error('Airtable configuration missing');
+        throw new Error("Airtable configuration missing");
       }
 
       // Prepare data in Airtable format
@@ -32,18 +32,20 @@ export class AirtableService {
         return {
           success: true,
           recordId: result.id, // Airtable record ID
-          message: 'Data saved to Airtable successfully'
+          message: "Data saved to Airtable successfully",
         };
       } else {
         // If API returns error, capture it
         const errorData = await response.text();
-        throw new Error(`Airtable API error: ${response.status} - ${errorData}`);
+        throw new Error(
+          `Airtable API error: ${response.status} - ${errorData}`
+        );
       }
     } catch (error) {
       // Return error object instead of throwing
       return {
         success: false,
-        error: error.message
+        error: error.message,
       };
     }
   }
@@ -55,12 +57,12 @@ export class AirtableService {
   prepareAirtableData(formData) {
     // Only map fields that exist in your Airtable table
     const fields = {
-      Name: formData.Name || formData.name || '',          // Map Name
-      Email: formData.Email || formData.email || '',       // Map Email
-      Message: formData.Message || formData.message || '', // Map Message
-      Timestamp: formData.Timestamp || new Date().toISOString(), // Use ISO string for date
-      'IP Address': formData['IP Address'] || formData.ip || 'unknown', // Capture IP
-      Origin: formData.Origin || formData.origin || 'unknown'          // Capture Origin header
+      Name: formData.Name || formData.name || "",
+      Email: formData.Email || formData.email || "",
+      Message: formData.Message || formData.message || "",
+      // Timestamp hata diya gaya hai
+      "IP Address": formData["IP Address"] || formData.ip || "unknown",
+      Origin: formData.Origin || formData.origin || "unknown",
     };
 
     // Airtable API expects records array
@@ -71,15 +73,17 @@ export class AirtableService {
    * Send POST request to Airtable API
    */
   async makeAirtableRequest(data, env) {
-    const url = `${this.baseUrl}/${env.AIRTABLE_BASE_ID}/${env.AIRTABLE_TABLE_NAME || 'Form_Submissions'}`;
+    const url = `${this.baseUrl}/${env.AIRTABLE_BASE_ID}/${
+      env.AIRTABLE_TABLE_NAME || "Form_Submissions"
+    }`;
 
     const requestOptions = {
-      method: 'POST',  // POST to create new record
+      method: "POST", // POST to create new record
       headers: {
         Authorization: `Bearer ${env.AIRTABLE_API_KEY}`, // API key in header
-        'Content-Type': 'application/json'
+        "Content-Type": "application/json",
       },
-      body: JSON.stringify(data) // Convert JS object to JSON string
+      body: JSON.stringify(data), // Convert JS object to JSON string
     };
 
     // Retry request in case of failures
@@ -97,7 +101,8 @@ export class AirtableService {
         const response = await fetch(url, options);
 
         // If success or client error, return immediately
-        if (response.ok || (response.status >= 400 && response.status < 500)) return response;
+        if (response.ok || (response.status >= 400 && response.status < 500))
+          return response;
 
         // If server error and last attempt, return response
         if (attempt === maxRetries) return response;
@@ -117,7 +122,7 @@ export class AirtableService {
    * Utility function to pause execution
    */
   delay(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   /**
@@ -127,19 +132,21 @@ export class AirtableService {
   async testConnection(env) {
     try {
       if (!env.AIRTABLE_API_KEY || !env.AIRTABLE_BASE_ID) {
-        return { success: false, error: 'Airtable configuration missing' };
+        return { success: false, error: "Airtable configuration missing" };
       }
 
-      const url = `${this.baseUrl}/${env.AIRTABLE_BASE_ID}/${env.AIRTABLE_TABLE_NAME || 'Form_Submissions'}`;
+      const url = `${this.baseUrl}/${env.AIRTABLE_BASE_ID}/${
+        env.AIRTABLE_TABLE_NAME || "Form_Submissions"
+      }`;
       const response = await fetch(url, {
-        method: 'GET', // GET to fetch table info
-        headers: { Authorization: `Bearer ${env.AIRTABLE_API_KEY}` }
+        method: "GET", // GET to fetch table info
+        headers: { Authorization: `Bearer ${env.AIRTABLE_API_KEY}` },
       });
 
       return {
         success: response.ok,
         status: response.status,
-        error: response.ok ? null : `HTTP ${response.status}`
+        error: response.ok ? null : `HTTP ${response.status}`,
       };
     } catch (error) {
       return { success: false, error: error.message };

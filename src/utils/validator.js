@@ -1,7 +1,7 @@
 /**
  * Form Validator
  * Handles form data validation and sanitization
- * 
+ *
  * Features:
  * - Required field validation
  * - Email format validation
@@ -18,7 +18,7 @@ export class FormValidator {
       phone: /^[\+]?[1-9][\d]{0,15}$/,
       url: /^https?:\/\/.+/,
       alphanumeric: /^[a-zA-Z0-9\s]+$/,
-      name: /^[a-zA-Z\s'-]+$/
+      name: /^[a-zA-Z\s'-]+$/,
     };
 
     // Field length limits
@@ -29,7 +29,7 @@ export class FormValidator {
       message: { min: 1, max: 5000 },
       subject: { min: 1, max: 200 },
       company: { min: 1, max: 100 },
-      website: { min: 1, max: 200 }
+      website: { min: 1, max: 200 },
     };
   }
 
@@ -39,13 +39,15 @@ export class FormValidator {
    * @param {string} requiredFields - Comma-separated list of required fields
    * @returns {Object} Validation result
    */
-  validateFormData(formData, requiredFields = '') {
+  validateFormData(formData, requiredFields = "") {
     const errors = [];
-    const requiredFieldsList = requiredFields ? requiredFields.split(',').map(f => f.trim()) : [];
+    const requiredFieldsList = requiredFields
+      ? requiredFields.split(",").map((f) => f.trim())
+      : [];
 
     // Check required fields
     for (const field of requiredFieldsList) {
-      if (!formData[field] || formData[field].toString().trim() === '') {
+      if (!formData[field] || formData[field].toString().trim() === "") {
         errors.push(`${field} is required`);
       }
     }
@@ -58,7 +60,7 @@ export class FormValidator {
 
     return {
       isValid: errors.length === 0,
-      errors: errors
+      errors: errors,
     };
   }
 
@@ -69,6 +71,11 @@ export class FormValidator {
    * @returns {Array} Validation errors for this field
    */
   validateField(field, value) {
+
+    if (value === undefined || value === null || value === "") {
+      return [];
+    }
+
     const errors = [];
     const stringValue = String(value).trim();
 
@@ -84,39 +91,44 @@ export class FormValidator {
         errors.push(`${field} must be at least ${limit.min} characters long`);
       }
       if (stringValue.length > limit.max) {
-        errors.push(`${field} must be no more than ${limit.max} characters long`);
+        errors.push(
+          `${field} must be no more than ${limit.max} characters long`
+        );
       }
     }
 
     // Field-specific validation
     switch (field) {
-      case 'email':
+      case "email":
         if (!this.patterns.email.test(stringValue)) {
-          errors.push('Invalid email format');
+          errors.push("Invalid email format");
         }
         break;
 
-      case 'phone':
-        if (!this.patterns.phone.test(stringValue.replace(/[\s\-\(\)]/g, ''))) {
-          errors.push('Invalid phone number format');
+      case "phone":
+        if (!this.patterns.phone.test(stringValue.replace(/[\s\-\(\)]/g, ""))) {
+          errors.push("Invalid phone number format");
         }
         break;
 
-      case 'website':
+      case "website":
         if (!this.patterns.url.test(stringValue)) {
-          errors.push('Invalid website URL format');
+          errors.push("Invalid website URL format");
         }
         break;
 
-      case 'name':
+      case "name":
         if (!this.patterns.name.test(stringValue)) {
-          errors.push('Name contains invalid characters');
+          errors.push("Name contains invalid characters");
         }
         break;
 
-      case 'company':
-        if (stringValue.length > 0 && !this.patterns.alphanumeric.test(stringValue)) {
-          errors.push('Company name contains invalid characters');
+      case "company":
+        if (
+          stringValue.length > 0 &&
+          !this.patterns.alphanumeric.test(stringValue)
+        ) {
+          errors.push("Company name contains invalid characters");
         }
         break;
     }
@@ -134,17 +146,17 @@ export class FormValidator {
 
     for (const [key, value] of Object.entries(formData)) {
       // Skip system fields
-      if (['timestamp', 'ip', 'userAgent', 'origin'].includes(key)) {
+      if (["timestamp", "ip", "userAgent", "origin"].includes(key)) {
         sanitized[key] = value;
         continue;
       }
 
       // Sanitize string values
-      if (typeof value === 'string') {
+      if (typeof value === "string") {
         sanitized[key] = this.sanitizeString(value);
-      } else if (typeof value === 'number') {
+      } else if (typeof value === "number") {
         sanitized[key] = this.sanitizeNumber(value);
-      } else if (typeof value === 'boolean') {
+      } else if (typeof value === "boolean") {
         sanitized[key] = value;
       } else {
         // Convert other types to string and sanitize
@@ -161,20 +173,22 @@ export class FormValidator {
    * @returns {string} Sanitized string
    */
   sanitizeString(value) {
-    if (typeof value !== 'string') {
+    if (typeof value !== "string") {
       return String(value);
     }
 
-    return value
-      .trim()
-      // Remove null bytes
-      .replace(/\0/g, '')
-      // Remove control characters except newlines and tabs
-      .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
-      // Normalize whitespace
-      .replace(/\s+/g, ' ')
-      // Limit length to prevent abuse
-      .substring(0, 10000);
+    return (
+      value
+        .trim()
+        // Remove null bytes
+        .replace(/\0/g, "")
+        // Remove control characters except newlines and tabs
+        .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "")
+        // Normalize whitespace
+        .replace(/\s+/g, " ")
+        // Limit length to prevent abuse
+        .substring(0, 10000)
+    );
   }
 
   /**
@@ -183,7 +197,7 @@ export class FormValidator {
    * @returns {number} Sanitized number
    */
   sanitizeNumber(value) {
-    if (typeof value !== 'number' || !isFinite(value)) {
+    if (typeof value !== "number" || !isFinite(value)) {
       return 0;
     }
 
@@ -206,7 +220,7 @@ export class FormValidator {
    * @returns {boolean} Is valid phone
    */
   isValidPhone(phone) {
-    return this.patterns.phone.test(phone.replace(/[\s\-\(\)]/g, ''));
+    return this.patterns.phone.test(phone.replace(/[\s\-\(\)]/g, ""));
   }
 
   /**
@@ -236,7 +250,7 @@ export class FormValidator {
     return {
       pattern: this.patterns[field] || null,
       limits: this.limits[field] || null,
-      required: false // This should be determined by the form configuration
+      required: false, // This should be determined by the form configuration
     };
   }
 }
